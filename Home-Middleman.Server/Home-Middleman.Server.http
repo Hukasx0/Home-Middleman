@@ -1,0 +1,6 @@
+@Home_Middleman.Server_HostAddress = http://localhost:5178
+
+GET {{Home_Middleman.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
