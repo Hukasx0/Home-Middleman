@@ -654,6 +654,7 @@ app.get('/api/cfg/import', (req, res) => {
           break;
       }
     });
+    console.log('[cfg:import] loaded', { path: req.query.path });
     res.send(`Config ${req.query.path} loaded`);
   });
 });
@@ -665,6 +666,7 @@ app.get('/api/cfg/export', (req, res) => {
   const fName = `${req.query.name}.json`;
   fs.writeFile(path.join(__dirname, 'upload', fName), JSON.stringify(toJson, null, 2), (erro) => {
     if (erro) { res.status(500).send(`Failed to export: ${erro.message}`); return; }
+    console.log('[cfg:export] wrote', { file: fName });
     res.send(`Config exported successfully to ${fName}`);
   });
 });
@@ -676,6 +678,7 @@ app.get('/api/restart', (req, res) => {
   gTasksLog = [];
   gClip = [];
   gNotes = [];
+  console.log('[system] restart');
   res.send("Home middleman has been restarted");
 });
 
@@ -720,6 +723,7 @@ app.get('/api/reload', (req, res) => {
           break;
       }
     });
+    console.log('[system] reload', { cfg: req.query.cfg });
     res.send(`Restarted Home Middleman and loaded ${req.query.cfg} config`);
   });
 });
@@ -873,6 +877,7 @@ app.post('/api/httpps/*', async (req, res) => {
 // Uploads
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) { res.status(400).send("No file specified"); return; }
+  console.log('[upload:file] uploaded', { name: req.file.originalname, size: req.file.size });
   res.status(200).send("File uploaded successfully");
 });
 
@@ -892,7 +897,10 @@ app.post('/api/uploadLink', (req, res) => {
         return;
       }
       response.pipe(fileStream);
-      fileStream.on('finish', () => { fileStream.close(() => res.status(200).send("File downloaded successfully from provided link")); });
+      fileStream.on('finish', () => {
+        console.log('[upload:link] downloaded', { name: fName });
+        fileStream.close(() => res.status(200).send("File downloaded successfully from provided link"));
+      });
     });
     pr.setTimeout(REQUEST_TIMEOUT_MS, () => pr.destroy(new Error('Request timeout')));
     pr.on('error', (e) => {
@@ -926,6 +934,7 @@ app.get('/api/files/del', (req, res) => {
     const full = safePathUnderUpload(req.query.path || '');
     fs.unlink(full, (err) => {
       if (err) { res.status(400).send(`Failed to remove: ${err.message}`); return; }
+      console.log('[files:del] removed', { path: req.query.path });
       res.send(`${req.query.path} removed successfully`);
     });
   } catch (e) {
@@ -942,6 +951,7 @@ app.get('/api/files/mv', (req, res) => {
       if (err) { res.status(500).send(`Failed to create directory: ${err.message}`); return; }
       fs.rename(oldFull, newFull, (err2) => {
         if (err2) { res.status(400).send(`Failed to rename: ${err2.message}`); return; }
+        console.log('[files:mv] moved', { old: req.query.old, new: req.query.new });
         res.send(`${req.query.old} has been renamed to ${req.query.new}`);
       });
     });
@@ -967,7 +977,10 @@ app.get('/api/files/send', (req, res) => {
     const reqx = (isHttps ? https : http).request(options, (pres) => {
       let data = '';
       pres.on('data', (chunk) => { data += chunk; });
-      pres.on('end', () => { res.send(data); });
+      pres.on('end', () => {
+        console.log('[files:send] sent', { source: req.query.path, target });
+        res.send(data);
+      });
     });
     reqx.setTimeout(REQUEST_TIMEOUT_MS, () => reqx.destroy(new Error('Request timeout')));
     reqx.on('error', (e) => res.status(502).send(`Send error: ${e.message}`));
@@ -991,6 +1004,7 @@ app.post('/api/write/', (req, res) => {
       const fullFile = safePathUnderUpload(path.join(savePath, fileName));
       fs.writeFile(fullFile, fileData, (erro) => {
         if (erro) { res.status(500).send(`Failed to write file: ${erro.message}`); return; }
+        console.log('[files:write] wrote', { path: path.join(savePath, fileName) });
         res.send("File created successfully!");
       });
     });
@@ -1003,6 +1017,7 @@ app.post('/api/write/', (req, res) => {
 app.post('/api/task/add', (req, res) => {
   const tName = String(req.body.name || '').trim();
   if (!tName) {
+    console.error('[validation] Task name is required', { body: req.body });
     return res.status(400).send('Task name is required');
   }
   const tType = String(req.body.type || '');
@@ -1015,8 +1030,10 @@ app.post('/api/task/add', (req, res) => {
     dbm.upsertTask(task);
     const idx = gTasks.findIndex(ob => ob.name === tName);
     if (idx >= 0) gTasks[idx] = task; else gTasks.push(task);
+    console.log('[task:add] Saved', { name: tName, type: tType });
     res.send(gTasks);
   } catch (e) {
+    console.error('[task:add] Failed to save task', e);
     res.status(500).send(`Failed to save task: ${e.message}`);
   }
 });
@@ -1030,6 +1047,7 @@ app.get('/api/task/del/:name', (req, res) => {
   const tName = String(req.params.name);
   try { require('./db/drizzle.js').deleteTask(tName); } catch (_) {}
   gTasks = gTasks.filter(ob => ob.name !== tName);
+  console.log('[task:del] Removed', { name: tName });
   res.send(`Task with name ${tName} has been removed`);
 });
 
@@ -1054,6 +1072,7 @@ app.get('/api/task/log/toFile', (req, res) => {
   const fileName = `${req.query.name}.json`;
   fs.writeFile(path.join(__dirname, 'upload', fileName), JSON.stringify(gTasksLog, null, 2), (erro) => {
     if (erro) { res.status(500).send(`Failed to save log: ${erro.message}`); return; }
+    console.log('[logs:save] wrote', { file: fileName });
     res.send("Log saved to file successfully!");
   });
 });
@@ -1061,6 +1080,7 @@ app.get('/api/task/log/toFile', (req, res) => {
 app.get('/api/task/log/clear', (req, res) => {
   try { require('./db/drizzle.js').clearLogsTable(); } catch (_) {}
   gTasksLog = [];
+  console.log('[logs:clear] cleared');
   res.send("Tasks log cleared!");
 });
 
@@ -1099,6 +1119,7 @@ app.post('/api/task/interval/add', (req, res) => {
   try { require('./db/drizzle.js').addIntervalDef(name, intTime); } catch (_) {}
   const id = setInterval(() => { doTask({ body: { name } }); }, intTime);
   gIntervals.push({ 'name': name, 'id': id, 'time': intTime });
+  console.log('[interval:add] added', { name, timeMs: intTime, id });
   res.send("Added new interval");
 });
 
@@ -1112,6 +1133,7 @@ app.get('/api/task/interval/kill/:iid', (req, res) => {
   }
   clearInterval(iid);
   gIntervals = gIntervals.filter(inte => inte.id != iid);
+  console.log('[interval:kill] stopped', { id: iid, name: found ? found.name : undefined });
   res.send(`interval with ${iid} id has been stopped`);
 });
 
@@ -1265,10 +1287,12 @@ app.get('/api/clip', (req, res) => {
 app.post('/api/clip/save', (req, res) => {
   const text = String(req.body.data || '').trim();
   if (!text) {
+    console.error('[validation] Clipboard text cannot be empty');
     return res.status(400).send('Clipboard text cannot be empty');
   }
-  try { require('./db/drizzle.js').addClipEntry(text); } catch (_) {}
+  try { require('./db/drizzle.js').addClipEntry(text); } catch (e) { console.error('[clip:save] DB error', e); }
   gClip.push(text);
+  console.log('[clip:save] Saved', { length: text.length });
   res.send('data saved to clip');
 });
 
@@ -1280,6 +1304,7 @@ app.get('/api/clip/history', (req, res) => {
 app.get('/api/clip/erase', (req, res) => {
   try { require('./db/drizzle.js').clearClipsTable(); } catch (_) {}
   gClip = [];
+  console.log('[clip:erase] Cleared');
   res.send('Clipboard erased');
 });
 
@@ -1294,10 +1319,12 @@ app.post('/api/notes/add', (req, res) => {
   const nText = String(req.body.text || '').trim();
   const nDate = String(req.body.date || '').trim();
   if (!nName || !nText || !nDate) {
+    console.error('[validation] Note requires non-empty name, text, and date', { bodyKeys: Object.keys(req.body || {}) });
     return res.status(400).send('Note requires non-empty name, text, and date');
   }
-  try { require('./db/drizzle.js').addNoteEntry(nName, nText, nDate); } catch (_) {}
+  try { require('./db/drizzle.js').addNoteEntry(nName, nText, nDate); } catch (e) { console.error('[notes:add] DB error', e); }
   gNotes.push({ 'name': nName, 'text': nText, 'date': nDate });
+  console.log('[notes:add] Added', { name: nName });
   res.send(`'${nName}' note added`);
 });
 
@@ -1305,6 +1332,7 @@ app.get('/api/notes/del/:name', (req, res) => {
   const noteName = String(req.params.name);
   try { require('./db/drizzle.js').deleteNoteEntry(noteName); } catch (_) {}
   gNotes = gNotes.filter(ob => ob.name !== noteName);
+  console.log('[notes:del] Removed', { name: noteName });
   res.send(`${noteName} removed`);
 });
 
