@@ -37,6 +37,14 @@ Python CLI: [client/hmmClient.py](client/hmmClient.py)
 - No external DB/Docker required — a local SQLite file is created on first run
 - Optional: Python 3.8+ if you want to use the CLI client
 
+## Security and deployment disclaimer
+
+WARNING: This application is NOT designed for production deployment and has NO built‑in security controls.
+- No authentication/authorization, no TLS, no request-level protections.
+- Intended for local/LAN use only. Do NOT expose this server to the public internet.
+- The author provides this software “as is”, without any warranties and assumes no responsibility for any damage or misuse resulting from running this software.
+- You are fully responsible for securing your environment, network, and any exposed services.
+
 ## Quick Start (all platforms)
 
 1) Install dependencies (one command):
