@@ -55,14 +55,14 @@
                   </select>
             </div>
             <div class="col-auto">
-                <input type="number" name="intTime" id="intTime" placeholder="Do every x minutes">
+                <input type="number" name="intTime" id="intTime" class="form-control" placeholder="run every x minutes" min="1">
             </div>
             <div class="col-auto">
                 <button class="btn btn-outline-secondary" type="button" onclick="startRoutine()">start</button>  
             </div>  
         </div>
         <h2>Running tasks in routine</h2>
-        <ul>
+        <ul class="list-group">
         <!-- routine -->
         </ul>
       </main>

@@ -1,17 +1,111 @@
+/* Layout */
+body {
+  background: #f8fafc; /* slate-50 */
+  color: #111827;      /* gray-900 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 main {
-    min-height: calc(100vh - 130px);
+  min-height: calc(100vh - 130px);
+  padding: 24px 16px;
 }
-a{
-    color: blue;
-    text-decoration: none;
+
+footer {
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
 }
-iframe{
-    width: 100%;
-    height: calc(100vh - 180px);
+
+/* Navbar */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03), 0 2px 8px rgba(0,0,0,0.04);
 }
-ul {
-    list-style: none;
+
+/* Links */
+a {
+  color: #2563eb; /* blue-600 */
+  text-decoration: none;
 }
-.cbtn{
-    margin: 10px;
+a:hover, a:focus {
+  color: #1e40af; /* blue-800 */
+  text-decoration: underline;
+}
+
+/* Buttons */
+.btn, .btn-sm, .btn-lg {
+  transition: all .15s ease-in-out;
+}
+.btn-outline-secondary:hover,
+.btn-outline-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0,0,0,.06);
+}
+
+/* Forms */
+.form-control, .form-select, input[type="text"], input[type="number"], input[type="date"] {
+  border-color: #e5e7eb;
+  min-height: 38px;
+}
+.form-control:focus, .form-select:focus {
+  border-color: #93c5fd; /* blue-300 */
+  box-shadow: 0 0 0 .2rem rgba(59,130,246,.15);
+  outline: none;
+}
+
+/* Lists */
+ul:not(.list-group) {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.list-group-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.list-group-item a {
+  word-break: break-word;
+}
+
+/* Cards */
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: .5rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  margin-bottom: 16px;
+}
+.card .card-body p {
+  margin-bottom: .5rem;
+}
+
+/* Headings & spacing */
+h1, h2, h3 {
+  margin-top: 1rem;
+  margin-bottom: .75rem;
+}
+.row + .row {
+  margin-top: .75rem;
+}
+
+/* Iframe */
+iframe {
+  width: 100%;
+  height: calc(100vh - 180px);
+  border: 1px solid #e5e7eb;
+  border-radius: .5rem;
+  background: #ffffff;
+}
+
+/* Utilities */
+.cbtn {
+  margin: 10px;
+}
+
+/* Responsive tweaks */
+@media (max-width: 576px) {
+  main { padding: 16px 12px; }
+  iframe { height: 60vh; }
 }

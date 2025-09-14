@@ -146,11 +146,13 @@
               <button class="btn btn-outline-secondary" type="button" onclick="alert('I don\'t know if you know this, but I\'ve added new values ​​that you can use in these fields, in short: ~hour~ inserts the hour, ~date~ inserts the hour, and ~inc$1~ iterates the numeric value (the one behind the dollar) every time the task is executed. You can use this in folder naming, POST or iterating through webpages, have fun!')">new!</button>  
           </div> 
         </div>
-        <a href="/api/task/log" target="_blank">tasks log</a><br>
-        <a href="/api/task/log/toFile" >save log to file</a><br>
-        <a href="/api/task/log/clear">clear log</a>
+        <div class="my-3 d-flex gap-2 flex-wrap">
+          <a class="btn btn-sm btn-outline-secondary" href="/api/task/log" target="_blank"><i class="bi bi-journal-text"></i> tasks log</a>
+          <a class="btn btn-sm btn-outline-secondary" href="/api/task/log/toFile"><i class="bi bi-save"></i> save log to file</a>
+          <a class="btn btn-sm btn-outline-danger" href="/api/task/log/clear"><i class="bi bi-trash3"></i> clear log</a>
+        </div>
         <h2>Task list</h2>
-        <ul>
+        <ul class="list-group">
         <!-- tasks -->
         </ul>
       </main>
