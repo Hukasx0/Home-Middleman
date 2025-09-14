@@ -50,13 +50,13 @@
         <div class="row">
             <h2>Add to clipboard</h2>
             <div class="col-auto">
-                <input type="text" name="addToClip" id="addToClip">
+                <input type="text" name="addToClip" id="addToClip" class="form-control" placeholder="text to save">
             </div>
             <div class="col-auto">
                 <button class="btn btn-outline-secondary" type="button" onclick="addToClipboard();">add</button> 
             </div>
             <div class="col-auto">
-                <a href="/api/clip/erase">clear clipboard</a>
+                <button class="btn btn-outline-danger" type="button" onclick="getRemove('/api/clip/erase')">clear clipboard</button>
             </div>
         </div>
         <div class="row text-center">
@@ -71,7 +71,7 @@
                     });
                 }
             </script>
-            <ul>
+            <ul class="list-group">
                 <!-- insert history -->
             </ul>
         </div>
