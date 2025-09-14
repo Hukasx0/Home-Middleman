@@ -9,6 +9,7 @@ const fs = require('fs');
 const bodyParser = require('body-parser');
 const cheerio = require('cheerio');
 const app = express();
+const dbm = require('./db/drizzle.js');
 
 // Constants
 const host = 'localhost';
@@ -57,6 +58,26 @@ setInterval(() => {
   uFiles = gfas.uFiles;
   uSize = gfas.uSize;
 }, 300000);
+
+// Initialize SQLite and hydrate in-memory caches and intervals
+try { dbm.initDb(); } catch (e) { console.error('DB init failed', e); }
+try {
+  // hydrate caches
+  gTasks = dbm.getAllTasks().map(t => ({
+    name: t.name, type: t.type, data: t.data, postType: t.postType, postData: t.postData
+  }));
+  gNotes = dbm.getAllNotes();
+  gClip = dbm.getClipHistory();
+  gTasksLog = dbm.getLastLogs(MAX_LOG_ENTRIES);
+  // rehydrate intervals
+  const defs = dbm.getAllIntervalDefs();
+  defs.forEach((def) => {
+    const id = setInterval(() => { doTask({ body: { name: def.name } }); }, def.timeMs);
+    gIntervals.push({ name: def.name, id, time: def.timeMs });
+  });
+} catch (e) {
+  console.error('DB hydrate failed', e);
+}
 /**
  * @typedef {Object} RequestOptions
  * @property {'http'|'https'} protocol
@@ -167,6 +188,8 @@ async function withRetries(opts, backoffsMs = RETRY_BACKOFFS_MS) {
  */
 function pushLog(entry) {
   try {
+    // persist to sqlite (also keep limited in-memory cache for UI)
+    try { require('./db/drizzle.js').addLog(entry); } catch (_) {}
     gTasksLog.push(entry);
     if (gTasksLog.length > MAX_LOG_ENTRIES) {
       gTasksLog.splice(0, gTasksLog.length - MAX_LOG_ENTRIES);
@@ -497,10 +520,12 @@ app.get('/get/texDocs', (req, res) => {
 app.get('/notes', (req, res) => {
   fs.readFile('web/notes.html', 'utf-8', (err, data) => {
     if (err) { res.status(500).send('Failed to read notes.html'); return; }
-    let notes = '';
-    for (let i = gNotes.length - 1; i >= 0; i--) {
-      const cgn = gNotes[i];
-      notes += `
+    let notesHtml = '';
+    let allNotes = [];
+    try { allNotes = dbm.getAllNotes(); } catch (_) { allNotes = gNotes; }
+    for (let i = allNotes.length - 1; i >= 0; i--) {
+      const cgn = allNotes[i];
+      notesHtml += `
             <div class="card">
                 <h2 class="text-center">${cgn.name}</h2>
                 <div class="card-body">
@@ -512,7 +537,7 @@ app.get('/notes', (req, res) => {
                 </div>
                 `;
     }
-    data = data.replace('<!-- notes -->', notes);
+    data = data.replace('<!-- notes -->', notesHtml);
     res.send(data);
   });
 });
@@ -520,12 +545,16 @@ app.get('/notes', (req, res) => {
 app.get('/clipboard', (req, res) => {
   fs.readFile('web/clip.html', 'utf-8', (err, data) => {
     if (err) { res.status(500).send('Failed to read clip.html'); return; }
+    let history = [];
+    let last = '';
+    try { history = dbm.getClipHistory(); last = dbm.getLastClipText(); }
+    catch (_) { history = gClip; last = gClip[gClip.length - 1] || ''; }
     let scb = '';
-    for (let i = gClip.length - 1; i >= 0; i--) {
-      scb += `<li>${gClip[i]}</li>`;
+    for (let i = history.length - 1; i >= 0; i--) {
+      scb += `<li>${history[i]}</li>`;
     }
     data = data.replace("<!-- insert history -->", scb);
-    res.send(data.replace("<!-- copyme -->", `<h1 id="copyMe" style="color: darkblue;" role="button" onclick="toClipboard()">${gClip[gClip.length - 1] || ''}</h1>`));
+    res.send(data.replace("<!-- copyme -->", `<h1 id="copyMe" style="color: darkblue;" role="button" onclick="toClipboard()">${last}</h1>`));
   });
 });
 
@@ -546,14 +575,17 @@ app.get('/files', (req, res) => {
 app.get('/tasks', (req, res) => {
   fs.readFile('web/tasks.html', 'utf-8', (err, data) => {
     if (err) { res.status(500).send('Failed to read tasks.html'); return; }
-    let tasks = '';
+    let tasksHtml = '';
     let stasks = '';
-    gTasks.forEach((t) => {
-      tasks += `<li>${t.name} | ${t.type} | ${t.data} <i class="bi bi-trash3" role="button" style="color:blueviolet;" onclick="getRemove('/api/task/del/${t.name}')"></i></li>`;
+    let allTasks = [];
+    try { allTasks = dbm.getAllTasks().map(t => ({ name: t.name, type: t.type, data: t.data })); }
+    catch (_) { allTasks = gTasks; }
+    allTasks.forEach((t) => {
+      tasksHtml += `<li>${t.name} | ${t.type} | ${t.data} <i class="bi bi-trash3" role="button" style="color:blueviolet;" onclick="getRemove('/api/task/del/${t.name}')"></i></li>`;
       stasks += `<option value="${t.name}">${t.name}</option>`;
     });
     data = data.replace("<!-- import tasks -->", stasks);
-    res.send(data.replace("<!-- tasks -->", tasks));
+    res.send(data.replace("<!-- tasks -->", tasksHtml));
   });
 });
 
@@ -594,16 +626,21 @@ app.get('/api/cfg/import', (req, res) => {
     try { parsed = JSON.parse(jsoncfg); } catch (e) { res.status(400).send('Invalid JSON'); return; }
     parsed.forEach((i) => {
       switch (i.type) {
-        case "task":
-          gTasks.push({
+        case "task": {
+          const t = {
             'name': i.data.name,
             'type': i.data.type,
             'data': i.data.data,
             'postType': i.data.postType,
             'postData': i.data.postData
-          });
+          };
+          try { dbm.upsertTask(t); } catch (_) {}
+          const idx = gTasks.findIndex(ob => ob.name === t.name);
+          if (idx >= 0) gTasks[idx] = t; else gTasks.push(t);
           break;
-        case "routine":
+        }
+        case "routine": {
+          try { dbm.addIntervalDef(i.data.name, i.data.time); } catch (_) {}
           gIntervals.push({
             'name': i.data.name,
             'id': setInterval(() => {
@@ -611,6 +648,8 @@ app.get('/api/cfg/import', (req, res) => {
             }, i.data.time),
             'time': i.data.time
           });
+          break;
+        }
         default:
           break;
       }
@@ -632,6 +671,7 @@ app.get('/api/cfg/export', (req, res) => {
 
 app.get('/api/restart', (req, res) => {
   clearAllIntervals();
+  try { require('./db/drizzle.js').clearAllData(); } catch (_) {}
   gTasks = [];
   gTasksLog = [];
   gClip = [];
@@ -645,22 +685,28 @@ app.get('/api/reload', (req, res) => {
   gTasksLog = [];
   gClip = [];
   gNotes = [];
+  const dbm = require('./db/drizzle.js');
+  try { dbm.clearAllData(); } catch (_) {}
   fs.readFile(path.join(__dirname, 'upload', req.query.cfg || ''), (err, jsoncfg) => {
     if (err) { res.status(400).send(`Failed to read config: ${err.message}`); return; }
     let parsed;
     try { parsed = JSON.parse(jsoncfg); } catch (e) { res.status(400).send('Invalid JSON'); return; }
     parsed.forEach((i) => {
       switch (i.type) {
-        case "task":
-          gTasks.push({
+        case "task": {
+          const t = {
             'name': i.data.name,
             'type': i.data.type,
             'data': i.data.data,
             'postType': i.data.postType,
             'postData': i.data.postData
-          });
+          };
+          try { dbm.upsertTask(t); } catch (_) {}
+          gTasks.push(t);
           break;
-        case "routine":
+        }
+        case "routine": {
+          try { dbm.addIntervalDef(i.data.name, i.data.time); } catch (_) {}
           gIntervals.push({
             'name': i.data.name,
             'id': setInterval(() => {
@@ -668,6 +714,8 @@ app.get('/api/reload', (req, res) => {
             }, i.data.time),
             'time': i.data.time
           });
+          break;
+        }
         default:
           break;
       }
@@ -958,8 +1006,16 @@ app.post('/api/task/add', (req, res) => {
   const tData = String(req.body.data || '');
   const postType = String(req.body.pType || '');
   const postData = String(req.body.pData || '');
-  gTasks.push({ 'name': tName, 'type': tType, 'data': tData, 'postType': postType, 'postData': postData });
-  res.send(gTasks);
+  const task = { 'name': tName, 'type': tType, 'data': tData, 'postType': postType, 'postData': postData };
+  try {
+    const dbm = require('./db/drizzle.js');
+    dbm.upsertTask(task);
+    const idx = gTasks.findIndex(ob => ob.name === tName);
+    if (idx >= 0) gTasks[idx] = task; else gTasks.push(task);
+    res.send(gTasks);
+  } catch (e) {
+    res.status(500).send(`Failed to save task: ${e.message}`);
+  }
 });
 
 app.post('/api/task/run', (req, res) => {
@@ -969,6 +1025,7 @@ app.post('/api/task/run', (req, res) => {
 
 app.get('/api/task/del/:name', (req, res) => {
   const tName = String(req.params.name);
+  try { require('./db/drizzle.js').deleteTask(tName); } catch (_) {}
   gTasks = gTasks.filter(ob => ob.name !== tName);
   res.send(`Task with name ${tName} has been removed`);
 });
@@ -981,7 +1038,14 @@ app.post('/api/task/time/run', (req, res) => {
 
 app.get('/api/task', (req, res) => { res.send(gTasks); });
 
-app.get('/api/task/log/', (req, res) => { res.send({ 'return': gTasksLog }); });
+app.get('/api/task/log/', (req, res) => {
+  try {
+    const dbm = require('./db/drizzle.js');
+    return res.send({ 'return': dbm.getLastLogs(MAX_LOG_ENTRIES) });
+  } catch (_) {
+    return res.send({ 'return': gTasksLog });
+  }
+});
 
 app.get('/api/task/log/toFile', (req, res) => {
   const fileName = `${req.query.name}.json`;
@@ -991,14 +1055,33 @@ app.get('/api/task/log/toFile', (req, res) => {
   });
 });
 
-app.get('/api/task/log/clear', (req, res) => { gTasksLog = []; res.send("Tasks log cleared!"); });
+app.get('/api/task/log/clear', (req, res) => {
+  try { require('./db/drizzle.js').clearLogsTable(); } catch (_) {}
+  gTasksLog = [];
+  res.send("Tasks log cleared!");
+});
 
-app.get('/api/task/count', (req, res) => { res.send("logs: " + (gTasksLog.length)); });
+app.get('/api/task/count', (req, res) => {
+  try {
+    const row = require('./db/drizzle.js').raw.prepare('SELECT COUNT(*) AS c FROM logs').get();
+    res.send("logs: " + (row ? row.c : 0));
+  } catch (_) {
+    res.send("logs: " + (gTasksLog.length));
+  }
+});
 
 app.get('/api/task/log/:logid', (req, res) => {
-  if (String(req.params.logid) === "n") { res.send(gTasksLog[gTasksLog.length - 1] || ''); return; }
-  const logid = parseInt(req.params.logid);
-  res.send(gTasksLog[logid] || '');
+  const idp = String(req.params.logid);
+  try {
+    const logs = require('./db/drizzle.js').getLastLogs(MAX_LOG_ENTRIES);
+    if (idp === "n") return res.send(logs[logs.length - 1] || '');
+    const idx = parseInt(idp, 10);
+    return res.send(logs[idx] || '');
+  } catch (_) {
+    if (idp === "n") { res.send(gTasksLog[gTasksLog.length - 1] || ''); return; }
+    const logid = parseInt(idp, 10);
+    res.send(gTasksLog[logid] || '');
+  }
 });
 
 app.get('/api/task/interval', (req, res) => {
@@ -1010,6 +1093,7 @@ app.get('/api/task/interval', (req, res) => {
 app.post('/api/task/interval/add', (req, res) => {
   const intTime = parseInt(req.body.time, 10);
   const name = req.body.name;
+  try { require('./db/drizzle.js').addIntervalDef(name, intTime); } catch (_) {}
   const id = setInterval(() => { doTask({ body: { name } }); }, intTime);
   gIntervals.push({ 'name': name, 'id': id, 'time': intTime });
   res.send("Added new interval");
@@ -1019,6 +1103,10 @@ app.get('/api/task/interval/count', (req, res) => { res.send("intervals: " + gIn
 
 app.get('/api/task/interval/kill/:iid', (req, res) => {
   const iid = parseInt(req.params.iid, 10);
+  const found = gIntervals.find(inte => inte.id == iid);
+  if (found) {
+    try { require('./db/drizzle.js').deleteIntervalDef(found.name); } catch (_) {}
+  }
   clearInterval(iid);
   gIntervals = gIntervals.filter(inte => inte.id != iid);
   res.send(`interval with ${iid} id has been stopped`);
@@ -1166,24 +1254,43 @@ app.get('/api/scraper/rss', (req, res) => {
 });
 
 // Clipboard
-app.get('/api/clip', (req, res) => { res.send(gClip[gClip.length - 1] || ''); });
+app.get('/api/clip', (req, res) => {
+  try { return res.send(require('./db/drizzle.js').getLastClipText()); }
+  catch (_) { return res.send(gClip[gClip.length - 1] || ''); }
+});
 
-app.post('/api/clip/save', (req, res) => { gClip.push(req.body.data); res.send('data saved to clip'); });
+app.post('/api/clip/save', (req, res) => {
+  try { require('./db/drizzle.js').addClipEntry(req.body.data); } catch (_) {}
+  gClip.push(req.body.data);
+  res.send('data saved to clip');
+});
 
-app.get('/api/clip/history', (req, res) => { res.send(gClip); });
+app.get('/api/clip/history', (req, res) => {
+  try { return res.send(require('./db/drizzle.js').getClipHistory()); }
+  catch (_) { return res.send(gClip); }
+});
 
-app.get('/api/clip/erase', (req, res) => { gClip = []; res.send('Clipboard erased'); });
+app.get('/api/clip/erase', (req, res) => {
+  try { require('./db/drizzle.js').clearClipsTable(); } catch (_) {}
+  gClip = [];
+  res.send('Clipboard erased');
+});
 
 // Notes
-app.get('/api/notes', (req, res) => { res.send(gNotes); });
+app.get('/api/notes', (req, res) => {
+  try { return res.send(require('./db/drizzle.js').getAllNotes()); }
+  catch (_) { return res.send(gNotes); }
+});
 
 app.post('/api/notes/add', (req, res) => {
+  try { require('./db/drizzle.js').addNoteEntry(req.body.name, req.body.text, req.body.date); } catch (_) {}
   gNotes.push({ 'name': req.body.name, 'text': req.body.text, 'date': req.body.date });
   res.send(`'${req.body.name}' note added`);
 });
 
 app.get('/api/notes/del/:name', (req, res) => {
   const noteName = String(req.params.name);
+  try { require('./db/drizzle.js').deleteNoteEntry(noteName); } catch (_) {}
   gNotes = gNotes.filter(ob => ob.name !== noteName);
   res.send(`${noteName} removed`);
 });
