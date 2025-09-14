@@ -1001,7 +1001,10 @@ app.post('/api/write/', (req, res) => {
 
 // Tasks
 app.post('/api/task/add', (req, res) => {
-  const tName = String(req.body.name || '');
+  const tName = String(req.body.name || '').trim();
+  if (!tName) {
+    return res.status(400).send('Task name is required');
+  }
   const tType = String(req.body.type || '');
   const tData = String(req.body.data || '');
   const postType = String(req.body.pType || '');
@@ -1260,8 +1263,12 @@ app.get('/api/clip', (req, res) => {
 });
 
 app.post('/api/clip/save', (req, res) => {
-  try { require('./db/drizzle.js').addClipEntry(req.body.data); } catch (_) {}
-  gClip.push(req.body.data);
+  const text = String(req.body.data || '').trim();
+  if (!text) {
+    return res.status(400).send('Clipboard text cannot be empty');
+  }
+  try { require('./db/drizzle.js').addClipEntry(text); } catch (_) {}
+  gClip.push(text);
   res.send('data saved to clip');
 });
 
@@ -1283,9 +1290,15 @@ app.get('/api/notes', (req, res) => {
 });
 
 app.post('/api/notes/add', (req, res) => {
-  try { require('./db/drizzle.js').addNoteEntry(req.body.name, req.body.text, req.body.date); } catch (_) {}
-  gNotes.push({ 'name': req.body.name, 'text': req.body.text, 'date': req.body.date });
-  res.send(`'${req.body.name}' note added`);
+  const nName = String(req.body.name || '').trim();
+  const nText = String(req.body.text || '').trim();
+  const nDate = String(req.body.date || '').trim();
+  if (!nName || !nText || !nDate) {
+    return res.status(400).send('Note requires non-empty name, text, and date');
+  }
+  try { require('./db/drizzle.js').addNoteEntry(nName, nText, nDate); } catch (_) {}
+  gNotes.push({ 'name': nName, 'text': nText, 'date': nDate });
+  res.send(`'${nName}' note added`);
 });
 
 app.get('/api/notes/del/:name', (req, res) => {
