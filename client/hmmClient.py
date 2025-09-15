@@ -119,6 +119,23 @@ def cmd_routine_add(addr: str, name: str, minutes: t.Optional[int], ms: t.Option
     else:
         _print("[error] provide --minutes or --ms")
         return 1
+
+    # Pre-validate that the task exists on the server
+    try:
+        resp = requests.get(_url(addr, "/api/task"), timeout=TIMEOUT)
+        resp.raise_for_status()
+        tasks = resp.json()
+        exists = any(isinstance(t, dict) and t.get("name") == name for t in tasks)
+        if not exists:
+            _print(f"[error] task '{name}' does not exist on server")
+            return 1
+    except requests.RequestException as e:
+        _print(f"[error] cannot validate task existence: {e}")
+        return 2
+    except ValueError as e:
+        _print(f"[error] server returned invalid tasks payload: {e}")
+        return 2
+
     return _handle_req(lambda: requests.post(_url(addr, "/api/task/interval/add"),
                                              data={"name": name, "time": str(time_ms)},
                                              timeout=TIMEOUT))

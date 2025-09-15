@@ -63,15 +63,22 @@ setInterval(() => {
 try { dbm.initDb(); } catch (e) { console.error('DB init failed', e); }
 try {
   // hydrate caches
-  gTasks = dbm.getAllTasks().map(t => ({
-    name: t.name, type: t.type, data: t.data, postType: t.postType, postData: t.postData
-  }));
+  gTasks = dbm.getAllTasks()
+    .filter(t => String(t.name || '').trim().length > 0)
+    .map(t => ({
+      name: t.name, type: t.type, data: t.data, postType: t.postType, postData: t.postData
+    }));
   gNotes = dbm.getAllNotes();
   gClip = dbm.getClipHistory();
   gTasksLog = dbm.getLastLogs(MAX_LOG_ENTRIES);
   // rehydrate intervals
   const defs = dbm.getAllIntervalDefs();
   defs.forEach((def) => {
+    if (!gTasks.some(t => t.name === def.name)) {
+      console.warn('[hydrate] skipping interval for missing task', { name: def.name });
+      try { dbm.deleteIntervalDef(def.name); } catch (_) {}
+      return;
+    }
     const id = setInterval(() => { doTask({ body: { name: def.name } }); }, def.timeMs);
     gIntervals.push({ name: def.name, id, time: def.timeMs });
   });
@@ -580,6 +587,7 @@ app.get('/tasks', (req, res) => {
     let allTasks = [];
     try { allTasks = dbm.getAllTasks().map(t => ({ name: t.name, type: t.type, data: t.data })); }
     catch (_) { allTasks = gTasks; }
+    allTasks = allTasks.filter(t => String(t.name || '').trim().length > 0);
     allTasks.forEach((t) => {
       tasksHtml += `<li>${t.name} | ${t.type} | ${t.data} <i class="bi bi-trash3" role="button" style="color:blueviolet;" onclick="getRemove('/api/task/del/${t.name}')"></i></li>`;
       stasks += `<option value="${t.name}">${t.name}</option>`;
@@ -624,38 +632,67 @@ app.get('/api/cfg/import', (req, res) => {
     if (err) { res.status(400).send(`Failed to read config: ${err.message}`); return; }
     let parsed;
     try { parsed = JSON.parse(jsoncfg); } catch (e) { res.status(400).send('Invalid JSON'); return; }
+
+    const tasksToUpsert = [];
+    const routinesToAdd = [];
+
     parsed.forEach((i) => {
       switch (i.type) {
         case "task": {
-          const t = {
+          tasksToUpsert.push({
             'name': i.data.name,
             'type': i.data.type,
             'data': i.data.data,
             'postType': i.data.postType,
             'postData': i.data.postData
-          };
-          try { dbm.upsertTask(t); } catch (_) {}
-          const idx = gTasks.findIndex(ob => ob.name === t.name);
-          if (idx >= 0) gTasks[idx] = t; else gTasks.push(t);
+          });
           break;
         }
         case "routine": {
-          try { dbm.addIntervalDef(i.data.name, i.data.time); } catch (_) {}
-          gIntervals.push({
-            'name': i.data.name,
-            'id': setInterval(() => {
-              doTask({ body: { name: i.data.name } });
-            }, i.data.time),
-            'time': i.data.time
-          });
+          routinesToAdd.push({ name: i.data.name, time: i.data.time });
           break;
         }
         default:
           break;
       }
     });
-    console.log('[cfg:import] loaded', { path: req.query.path });
-    res.send(`Config ${req.query.path} loaded`);
+
+    // Upsert tasks first
+    const skippedEmptyTasks = [];
+    tasksToUpsert.forEach((t) => {
+      const nm = String(t.name || '').trim();
+      if (!nm) {
+        skippedEmptyTasks.push(t);
+        console.warn('[cfg:import] skipping task with empty name');
+        return;
+      }
+      t.name = nm;
+      try { dbm.upsertTask(t); } catch (_) {}
+      const idx = gTasks.findIndex(ob => ob.name === t.name);
+      if (idx >= 0) gTasks[idx] = t; else gTasks.push(t);
+    });
+
+    // Then add routines that reference existing tasks
+    const skipped = [];
+    routinesToAdd.forEach((r) => {
+      if (!gTasks.some(t => t.name === r.name)) {
+        skipped.push(r.name);
+        console.warn('[cfg:import] skipping routine referencing missing task', { name: r.name });
+        return;
+      }
+      try { dbm.addIntervalDef(r.name, r.time); } catch (_) {}
+      gIntervals.push({
+        'name': r.name,
+        'id': setInterval(() => { doTask({ body: { name: r.name } }); }, r.time),
+        'time': r.time
+      });
+    });
+
+    console.log('[cfg:import] loaded', { path: req.query.path, tasks: tasksToUpsert.length, routines: routinesToAdd.length, skipped, tasksSkippedEmpty: skippedEmptyTasks.length });
+    const msg = skipped.length
+      ? `Config ${req.query.path} loaded. Skipped routines for missing tasks: ${skipped.join(', ')}`
+      : `Config ${req.query.path} loaded`;
+    res.send(msg);
   });
 });
 
@@ -694,37 +731,66 @@ app.get('/api/reload', (req, res) => {
     if (err) { res.status(400).send(`Failed to read config: ${err.message}`); return; }
     let parsed;
     try { parsed = JSON.parse(jsoncfg); } catch (e) { res.status(400).send('Invalid JSON'); return; }
+
+    const tasksToUpsert = [];
+    const routinesToAdd = [];
+
     parsed.forEach((i) => {
       switch (i.type) {
         case "task": {
-          const t = {
+          tasksToUpsert.push({
             'name': i.data.name,
             'type': i.data.type,
             'data': i.data.data,
             'postType': i.data.postType,
             'postData': i.data.postData
-          };
-          try { dbm.upsertTask(t); } catch (_) {}
-          gTasks.push(t);
+          });
           break;
         }
         case "routine": {
-          try { dbm.addIntervalDef(i.data.name, i.data.time); } catch (_) {}
-          gIntervals.push({
-            'name': i.data.name,
-            'id': setInterval(() => {
-              doTask({ body: { name: i.data.name } });
-            }, i.data.time),
-            'time': i.data.time
-          });
+          routinesToAdd.push({ name: i.data.name, time: i.data.time });
           break;
         }
         default:
           break;
       }
     });
-    console.log('[system] reload', { cfg: req.query.cfg });
-    res.send(`Restarted Home Middleman and loaded ${req.query.cfg} config`);
+
+    // Upsert tasks first
+    const skippedEmptyTasks = [];
+    tasksToUpsert.forEach((t) => {
+      const nm = String(t.name || '').trim();
+      if (!nm) {
+        skippedEmptyTasks.push(t);
+        console.warn('[system:reload] skipping task with empty name');
+        return;
+      }
+      t.name = nm;
+      try { dbm.upsertTask(t); } catch (_) {}
+      gTasks.push(t);
+    });
+
+    // Then add routines if task exists
+    const skipped = [];
+    routinesToAdd.forEach((r) => {
+      if (!gTasks.some(t => t.name === r.name)) {
+        skipped.push(r.name);
+        console.warn('[system:reload] skipping routine referencing missing task', { name: r.name });
+        return;
+      }
+      try { dbm.addIntervalDef(r.name, r.time); } catch (_) {}
+      gIntervals.push({
+        'name': r.name,
+        'id': setInterval(() => { doTask({ body: { name: r.name } }); }, r.time),
+        'time': r.time
+      });
+    });
+
+    console.log('[system] reload', { cfg: req.query.cfg, tasks: tasksToUpsert.length, routines: routinesToAdd.length, skipped, tasksSkippedEmpty: skippedEmptyTasks.length });
+    const msg = skipped.length
+      ? `Restarted Home Middleman and loaded ${req.query.cfg} config. Skipped routines for missing tasks: ${skipped.join(', ')}`
+      : `Restarted Home Middleman and loaded ${req.query.cfg} config`;
+    res.send(msg);
   });
 });
 
@@ -1047,8 +1113,17 @@ app.get('/api/task/del/:name', (req, res) => {
   const tName = String(req.params.name);
   try { require('./db/drizzle.js').deleteTask(tName); } catch (_) {}
   gTasks = gTasks.filter(ob => ob.name !== tName);
-  console.log('[task:del] Removed', { name: tName });
-  res.send(`Task with name ${tName} has been removed`);
+
+  // Remove any routines using this task
+  const affected = gIntervals.filter(inte => inte.name === tName);
+  affected.forEach((inte) => {
+    try { require('./db/drizzle.js').deleteIntervalDef(inte.name); } catch (_) {}
+    try { clearInterval(inte.id); } catch (_) {}
+  });
+  gIntervals = gIntervals.filter(inte => inte.name !== tName);
+
+  console.log('[task:del] Removed', { name: tName, removedIntervals: affected.length });
+  res.send(`Task '${tName}' removed. Also removed ${affected.length} routine(s) using this task.`);
 });
 
 app.post('/api/task/time/run', (req, res) => {
@@ -1115,7 +1190,22 @@ app.get('/api/task/interval', (req, res) => {
 
 app.post('/api/task/interval/add', (req, res) => {
   const intTime = parseInt(req.body.time, 10);
-  const name = req.body.name;
+  const name = String(req.body.name || '').trim();
+
+  if (!name) {
+    console.error('[validation] Interval requires task name');
+    return res.status(400).send('Task name is required for routine');
+  }
+  if (!Number.isFinite(intTime) || intTime <= 0) {
+    console.error('[validation] Invalid interval time', { time: req.body.time });
+    return res.status(400).send('Invalid interval time');
+  }
+  const exists = gTasks.some(t => t.name === name);
+  if (!exists) {
+    console.warn('[interval:add] Rejected - task does not exist', { name });
+    return res.status(400).send(`Task '${name}' does not exist`);
+  }
+
   try { require('./db/drizzle.js').addIntervalDef(name, intTime); } catch (_) {}
   const id = setInterval(() => { doTask({ body: { name } }); }, intTime);
   gIntervals.push({ 'name': name, 'id': id, 'time': intTime });
